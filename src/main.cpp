@@ -13,7 +13,6 @@
 #include "inetGSM.h"
 
 // Define constants.
-#define DEBUG 1                   // Enable or disable debugging
 #define DHTPIN  A0                // Temperature Sense pin
 #define DHTTYPE DHT11             // DHT 11
 
@@ -26,8 +25,10 @@ const long interval = 5000;       // Set interval to read temperature.
 
 // Configure GSM module.
 InetGSM inet;
+int httpResponseLength = 1000;
 char msg[50];
 char inSerial[50];
+int numData;                      // Number of data received.
 int i = 0;
 
 // Simple sketch to send and receive SMS.
@@ -41,51 +42,53 @@ boolean started = false;
 
 void setup() {
   pinMode(gsmStatusLed, OUTPUT);
-  
-  if (DEBUG) {
-    // Serial connection.
-    Serial.begin(9600);
-    while (!Serial) {
-      ; // wait for serial port to connect. Needed for native USB port only
-    }
-  }
 
-  // Initialize Temperature sensor.
-  dht.begin();
+  // Serial connection.
+  Serial.begin(9600);
+  while (!Serial) {
+    ; // wait for serial port to connect. Needed for native USB port only
+  }
 
   Serial.println("Initializing GSM Shield ...");
 
-  // Start configuration of shield with baudrate (4800 or lower).
-  if (gsm.begin(2400)) {
-    Serial.println("\nGSM Status: READY");
-    started = true;
-  } else {
-    Serial.println("\nGSM Status: IDLE");
+  while(!started) {
+    // Start configuration of shield with baudrate (4800 or lower).
+    if (gsm.begin(2400)) {
+      Serial.println("\nGSM Status: READY");
+      started = true;
+
+      // Turn on LED when GSM is ready.
+      digitalWrite(gsmStatusLed, HIGH);
+    } else {
+      Serial.println("\nGSM Status: IDLE");
+    }
   }
 
-  if(started) {
-    // Turn on LED when GSM is ready.
-    digitalWrite(gsmStatusLed, HIGH);
+  Serial.println("Starting Arduino web client.");
 
-    // GPRS attach, put in order APN, username and password.
-    // If no needed auth let them blank.
-    // APN is from Sun Cellular Network, change it according
-    // cellular network provider.
+  // connection state
+  boolean notConnected = true;
+
+  // After starting the modem with GSM.begin()
+  // attach the shield to the GPRS network with the APN, login and password
+  while (notConnected) {
     if (inet.attachGPRS("http://globe.com.ph", "", "")) {
-      Serial.println("GPRS Status: ATTACHED");
+      notConnected = false;
+    } else {
+      Serial.println("Not connected");
+      delay(1000);
     }
-    else {
-      Serial.println("GPRS Status: ERROR");
-    }
-    delay(1000);
-
-    // Read IP address.
-    gsm.SimpleWriteln("AT+CIFSR");
-    delay(3000);
-
-    // Read until serial buffer is empty.
-    gsm.WhileSimpleRead();
   }
+
+  // Read IP address.
+  gsm.SimpleWriteln("AT+CIFSR");
+  delay(3000);
+
+  // Read until serial buffer is empty.
+  gsm.WhileSimpleRead();
+
+  // Initialize Temperature sensor.
+  dht.begin();
 };
 
 /**
@@ -115,7 +118,7 @@ void serialhwread() {
     }
 
     // Read last message saved.
-    if(!strcmp(inSerial,"MSG")) {
+    if(!strcmp(inSerial,"HTTP Response")) {
       Serial.println(msg);
     } else {
       Serial.println(inSerial);
@@ -146,13 +149,14 @@ void logTemperature(float temperature) {
   // SECRET_CREDENTIAL
 
   // Get access token.
-  // numdata = inet.httpGET("api.elexlabs.com", 80, "/rest/session/token", msg, 1000);
+  numData = inet.httpGET("api.elexlabs.com", 80, "/rest/session/token", msg, httpResponseLength);
+  // numData = inet.httpGET("http://192.168.10.10", 80, "/", msg, httpResponseLength);
 
   // Print the results.
-  // Serial.println("\nGET - Number of data received:");
-  // Serial.println(numdata);
-  // Serial.println("\nGET - Data received:");
-  // Serial.println(msg);
+  Serial.println("\nGET - Length of response received:");
+  Serial.println(numData);
+  Serial.println("\nGET - Response received:");
+  Serial.println(msg);
 
   /**
   HTTP/1.1 200 OK
@@ -230,30 +234,26 @@ void logTemperature(float temperature) {
 
 void loop() {
   unsigned long currentMillis = millis();
-
-  // Read for new byte on serial hardware,
-  // and write them on NewSoftSerial.
-  serialhwread();
-
-  // Read for new byte on NewSoftSerial.
-  serialswread();
-  
   if (currentMillis - previousMillis >= interval) {
     // Save the last time we've read the temperature.
     previousMillis = currentMillis;
+
+    // Read for new byte on serial hardware, and write them on NewSoftSerial.
+    serialhwread();
+
+    // Read for new byte on NewSoftSerial.
+    serialswread();
 
     // Read data and store it to variables hum and temp.
     humidity = dht.readHumidity();
     temperature= dht.readTemperature();
 
-    if (DEBUG) {
-      // Print temp and humidity values to serial monitor.
-      Serial.print("Humidity: ");
-      Serial.print(humidity);
-      Serial.print(" %, Temp: ");
-      Serial.print(temperature);
-      Serial.print(" *C\n");
-    }
+    // Print temp and humidity values to serial monitor.
+    Serial.print("Humidity: ");
+    Serial.print(humidity);
+    Serial.print(" %, Temp: ");
+    Serial.print(temperature);
+    Serial.print(" *C\n");
 
     // Log temperature data.
     logTemperature(temperature);
